@@ -1,8 +1,5 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.ComponentModel;
-using System.Data;
-using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -13,9 +10,11 @@ using SimpleHelpers;
 
 namespace log_file_util
 {
-    public partial class Form1 : Form
+    public partial class MainForm : Form
     {
-        public Form1()
+        private const int DetectSize = 1024 * 1024 * 10;
+
+        public MainForm()
         {
             InitializeComponent();
         }
@@ -28,20 +27,21 @@ namespace log_file_util
         };
 
         private List<ConvertFile> _convertFiles;
+
         private void Form1_Load(object sender, EventArgs e)
         {
             cbTargetEncoding.DataSource = _targetEncodings;
         }
 
-        private void dataGridView1_DragDrop(object sender, DragEventArgs e)
+        private async void dataGridView1_DragDrop(object sender, DragEventArgs e)
         {
             var fileOrFolders = e.Data.GetData(DataFormats.FileDrop) as string[];
-            SetItems(fileOrFolders);
+            await SetItems(fileOrFolders);
         }
 
-        private void SetItems(string[] fileOrFolders)
+        private async Task SetItems(string[] fileOrFolders)
         {
-            var allFiles = _convertFiles = GetAllFiles(fileOrFolders);
+            var allFiles = _convertFiles = await GetAllFiles(fileOrFolders);
 
             listView1.Items.Clear();
             listView1.Items.AddRange(allFiles.Select(d =>
@@ -54,9 +54,11 @@ namespace log_file_util
                 lvi.SubItems.Add(d.SizeInBytes.ToString());
                 return lvi;
             }).ToArray());
+
+            listView1.AutoResizeColumns(ColumnHeaderAutoResizeStyle.ColumnContent);
         }
 
-        private List<ConvertFile> GetAllFiles(string[] fileOrDirectories)
+        private async Task<List<ConvertFile>> GetAllFiles(string[] fileOrDirectories)
         {
             var files = new List<ConvertFile>();
             foreach (var fileOrDirectory in fileOrDirectories)
@@ -65,16 +67,16 @@ namespace log_file_util
                 if ((fileAttributes & FileAttributes.Directory) == FileAttributes.Directory)
                 {
                     var subFiles = Directory.GetFiles(fileOrDirectory);
-                    files.AddRange(GetAllFiles(subFiles));
+                    files.AddRange(await GetAllFiles(subFiles));
                 }
                 else
                 {
                     var fileInfo = new FileInfo(fileOrDirectory);
 
-                    byte[] buffer = new byte[fileInfo.Length > 1024 * 1024 * 10 ? 1024 * 1024 * 10 : fileInfo.Length];
+                    byte[] buffer = new byte[fileInfo.Length > DetectSize ? DetectSize : fileInfo.Length];
                     using (var fileStream = new FileStream(fileOrDirectory, FileMode.Open))
                     {
-                        fileStream.Read(buffer, 0, buffer.Length);
+                        await fileStream.ReadAsync(buffer, 0, buffer.Length);
                     }
 
                     var checkForTextualData = FileEncoding.CheckForTextualData(buffer);
@@ -85,8 +87,7 @@ namespace log_file_util
                     else
                     {
                         var detectFileEncoding = FileEncoding.DetectFileEncoding(buffer, 0, buffer.Length);
-                        var readAllText = File.ReadAllText(fileOrDirectory, detectFileEncoding);
-                        var convertFile = new ConvertFile { FileName = fileOrDirectory, Encoding = detectFileEncoding, SizeInBytes = fileInfo.Length };
+                        var convertFile = new ConvertFile {Encoding = detectFileEncoding, FileInfo = fileInfo};
                         files.Add(convertFile);
                     }
                 }
@@ -108,24 +109,22 @@ namespace log_file_util
             }
         }
 
-        private void btnConvertEncoding_Click(object sender, EventArgs e)
+        private async void btnConvertEncoding_Click(object sender, EventArgs e)
         {
             if (_convertFiles == null) return;
 
             var targetEncoding = Encoding.GetEncoding(cbTargetEncoding.Text);
 
-            foreach (var convertFile in _convertFiles)
+            await ProcessWithProgress(file =>
             {
-                if (Equals(convertFile.Encoding, targetEncoding))
+                if (!Equals(file.Encoding, targetEncoding))
                 {
-                    continue;
+                    var readAllText = File.ReadAllText(file.FileName, file.Encoding);
+                    File.WriteAllText(file.FileName, readAllText, targetEncoding);
                 }
+            });
 
-                var readAllText = File.ReadAllText(convertFile.FileName, convertFile.Encoding);
-                File.WriteAllText(convertFile.FileName, readAllText, targetEncoding);
-            }
-
-            SetItems(_convertFiles.Select(d => d.FileName).ToArray());
+            await SetItems(_convertFiles.Select(d => d.FileName).ToArray());
         }
 
         private async void btnRegexReplace_Click(object sender, EventArgs e)
@@ -134,33 +133,49 @@ namespace log_file_util
 
             if (string.IsNullOrWhiteSpace(tbRegex.Text)) return;
 
-            btnRegexReplace.Enabled = false;
+            var regex = new Regex(tbRegex.Text,
+                RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Multiline);
+
+            await ProcessWithProgress(file =>
+            {
+                var readAllText = File.ReadAllText(file.FileName, file.Encoding);
+                readAllText = regex.Replace(readAllText, tbReplacement.Text);
+                File.WriteAllText(file.FileName, readAllText, file.Encoding);
+            });
+        }
+
+        private async Task ProcessWithProgress(Action<ConvertFile> processAction)
+        {
+            SetControlState(this.Controls.Cast<Control>(), false);
             try
             {
-                var regex = new Regex(tbRegex.Text,
-                    RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Multiline);
-
                 progressBar1.Value = 0;
                 progressBar1.Minimum = 0;
                 progressBar1.Maximum = _convertFiles.Count;
 
                 await Task.Run(() =>
                 {
-                    Parallel.ForEach(_convertFiles, new ParallelOptions(){MaxDegreeOfParallelism = Environment.ProcessorCount},
+                    Parallel.ForEach(_convertFiles, new ParallelOptions() {MaxDegreeOfParallelism = Environment.ProcessorCount},
                         file =>
-                    {
-                        var readAllText = File.ReadAllText(file.FileName, file.Encoding);
-                        readAllText = regex.Replace(readAllText, tbReplacement.Text);
-                        File.WriteAllText(file.FileName, readAllText, file.Encoding);
-                        progressBar1.Invoke((() => progressBar1.Value++));
-                    });
+                        {
+                            processAction(file);
+                            progressBar1.Invoke((() => progressBar1.Value++));
+                        });
                 });
             }
             finally
             {
-                btnRegexReplace.Enabled = true;
+                SetControlState(this.Controls.Cast<Control>(), true);
             }
+        }
 
+        private void SetControlState(IEnumerable<Control> controls, bool enabled)
+        {
+            foreach (Control control in controls)
+            {
+                control.Enabled = enabled;
+                SetControlState(control.Controls.Cast<Control>(), enabled);
+            }
         }
     }
 }

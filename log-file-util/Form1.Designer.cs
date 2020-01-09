@@ -1,6 +1,6 @@
 ﻿namespace log_file_util
 {
-    partial class Form1
+    partial class MainForm
     {
         /// <summary>
         /// Required designer variable.
@@ -55,7 +55,7 @@
             this.listView1.HideSelection = false;
             this.listView1.Location = new System.Drawing.Point(12, 12);
             this.listView1.Name = "listView1";
-            this.listView1.Size = new System.Drawing.Size(546, 174);
+            this.listView1.Size = new System.Drawing.Size(546, 190);
             this.listView1.TabIndex = 1;
             this.listView1.UseCompatibleStateImageBehavior = false;
             this.listView1.View = System.Windows.Forms.View.Details;
@@ -70,7 +70,8 @@
             // 
             // columnHeader3
             // 
-            this.columnHeader3.Text = "文件大小(字节)";
+            this.columnHeader3.Text = "大小(字节)";
+            this.columnHeader3.Width = 110;
             // 
             // btnConvertEncoding
             // 
@@ -162,8 +163,8 @@
             this.Controls.Add(this.cbTargetEncoding);
             this.Controls.Add(this.btnConvertEncoding);
             this.Controls.Add(this.listView1);
-            this.Name = "Form1";
-            this.Text = "Form1";
+            this.Name = "MainForm";
+            this.Text = "日志批处理工具";
             this.Load += new System.EventHandler(this.Form1_Load);
             this.DragDrop += new System.Windows.Forms.DragEventHandler(this.dataGridView1_DragDrop);
             this.DragEnter += new System.Windows.Forms.DragEventHandler(this.dataGridView1_DragEnter);
